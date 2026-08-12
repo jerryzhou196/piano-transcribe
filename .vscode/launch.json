@@ -1,0 +1,14 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Walk through transcribe.py",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/transcribe.py",
+      "console": "integratedTerminal",
+      "justMyCode": true,
+      "stopOnEntry": true
+    }
+  ]
+}
