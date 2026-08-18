@@ -9,6 +9,7 @@ from scipy.io import wavfile
 from sklearn.linear_model import Ridge
 
 SR = 16000  # samples/sec
+NOTE_SECS = 0.5  # how long every note lasts
 LOW, HIGH = 21, 108  # MIDI range of an 88-key piano (A0..C8)
 N_KEYS = HIGH - LOW + 1
 FRAME = 2048  # samples per analysis window = 128ms, ~7.8 Hz per frequency bin
@@ -19,28 +20,26 @@ def midi_to_hz(m):
     return 440.0 * 2.0 ** ((m - 69) / 12)
 
 
-def pluck(midi, dur=0.5):
-    """One note: fundamental + 3 harmonics at 1/k amplitude, struck-string decay."""
-    t = np.arange(int(dur * SR)) / SR
-    f = midi_to_hz(midi)
-    wave = sum(np.sin(2 * np.pi * f * k * t) / k for k in range(1, 5))
+def note(midi):
+    """One key struck: fundamental + 3 harmonics at 1/k volume, fading out."""
+    t = np.arange(int(NOTE_SECS * SR)) / SR
+    hz = midi_to_hz(midi)
+    wave = sum(np.sin(2 * np.pi * hz * k * t) / k for k in range(1, 5))
     return wave * np.exp(-3 * t)
     # ponytail: pure harmonics. Real strings are inharmonic (upper partials run sharp);
     # add a stiffness term if the model turns out to have it too easy.
 
 
-def render(events, dur=0.5):
-    """events: list of (midi, ...) tuples, one chord per slot.
+def chord(midis):
+    """Several keys at once: add the notes up, divide so the volume stays put."""
+    return sum(note(m) for m in midis) / len(midis)
 
-    Returns (audio, labels) where labels[i, k] == 1 means key LOW+k is down in slot i.
-    """
-    audio, labels = [], np.zeros((len(events), N_KEYS))
-    for i, chord in enumerate(events):
-        mix = sum(pluck(m, dur) for m in chord)
-        audio.append(mix / max(len(chord), 1))  # volumne normalization
-        for m in chord:
-            labels[i, m - LOW] = 1
-    return np.concatenate(audio), labels
+
+def keys_down(midis):
+    """The answer sheet for one chord: 88 zeros, a 1 at every key being held."""
+    row = np.zeros(N_KEYS)
+    row[[m - LOW for m in midis]] = 1
+    return row
 
 
 BIN_HZ = np.fft.rfftfreq(FRAME, 1 / SR)  # what frequency each FFT bin means
@@ -52,9 +51,9 @@ def spectrum(frame):
     return np.abs(np.fft.rfft(windowed))
 
 
-def featurize(audio, n_slots, dur=0.5):
+def featurize(audio, n_slots):
     """One spectrum per slot, taken from the loud attack at the slot's start."""
-    step = int(dur * SR)
+    step = int(NOTE_SECS * SR)
     return np.stack([spectrum(audio[i * step : i * step + FRAME]) for i in range(n_slots)])
 
 
@@ -69,13 +68,14 @@ TRAIN_LOW, TRAIN_HIGH = 36, 84  # C2..C6
 # blur together at 7.8 Hz/bin) and less aliasing headroom - widen once the middle works.
 
 
-def dataset(n, seed, dur=0.5):
+def dataset(n, seed):
     """n slots of 1-4 random simultaneous notes -> (log-spectra, labels)."""
     rng = np.random.default_rng(seed)
     keys = np.arange(TRAIN_LOW, TRAIN_HIGH + 1)
-    events = [tuple(rng.choice(keys, rng.integers(1, 5), replace=False)) for _ in range(n)]
-    audio, y = render(events, dur)
-    return np.log1p(featurize(audio, n, dur)), y
+    events = [rng.choice(keys, rng.integers(1, 5), replace=False) for _ in range(n)]
+    audio = np.concatenate([chord(e) for e in events])
+    y = np.stack([keys_down(e) for e in events])
+    return np.log1p(featurize(audio, n)), y
     # ponytail: log1p compresses the huge dynamic range between fundamental and
     # harmonics, so quiet partials still move the weights. Raw magnitudes work worse.
 
@@ -106,9 +106,10 @@ def score(pred, y):
 if __name__ == "__main__":
     # C major scale, then a C major chord, then C4+C5 (the ambiguous case)
     events = [(60,), (62,), (64,), (65,), (67,), (60, 64, 67), (60, 72)]
-    audio, labels = render(events)
+    audio = np.concatenate([chord(e) for e in events])
+    labels = np.stack([keys_down(e) for e in events])
 
-    assert audio.shape == (len(events) * int(0.5 * SR),)
+    assert audio.shape == (len(events) * int(NOTE_SECS * SR),)
     assert labels.sum() == sum(len(e) for e in events)
 
     print(f"audio: {audio.shape[0]} samples = {audio.shape[0]/SR:.1f}s @ {SR} Hz")
