@@ -2,10 +2,41 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Walk through transcribe.py",
+      "name": "Walk through layer03_correlate.py",
       "type": "debugpy",
       "request": "launch",
-      "program": "${workspaceFolder}/transcribe.py",
+      "program": "${workspaceFolder}/layers/layer03_correlate.py",
+      "cwd": "${workspaceFolder}/layers",
+      "console": "integratedTerminal",
+      "justMyCode": true,
+      "stopOnEntry": true
+    },
+    {
+      "name": "Walk through layer04_fft.py",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/layers/layer04_fft.py",
+      "cwd": "${workspaceFolder}/layers",
+      "console": "integratedTerminal",
+      "justMyCode": true,
+      "stopOnEntry": true
+    },
+    {
+      "name": "Walk through layer05_keybank.py",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/layers/layer05_keybank.py",
+      "cwd": "${workspaceFolder}/layers",
+      "console": "integratedTerminal",
+      "justMyCode": true,
+      "stopOnEntry": true
+    },
+    {
+      "name": "Walk through layer06_constantq.py",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/layers/layer06_constantq.py",
+      "cwd": "${workspaceFolder}/layers",
       "console": "integratedTerminal",
       "justMyCode": true,
       "stopOnEntry": true
