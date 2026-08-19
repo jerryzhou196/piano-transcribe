@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FFT values — piano-transcribe notes</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <nav id="nav" class="site-nav"></nav>
+  <main id="root"></main>
+  <script src="common.js"></script>
+  <script>
+    nav("fft-values");
+    const WAVE_MS = [
+      "0","","","","","","","","25","","","","","","","","51",
+      "","","","","","","","76","","","","","","","","102","",
+      "","","","","","","128",
+    ];
+    const FRAME_DS = [
+      0,-1.2312,-0.6855,-0.0158,0.3657,0.6449,1.4085,-1.2306,-0.6815,
+      -0.3757,0.0097,0.6124,0.9299,0.4546,-1.2376,-0.6034,-0.0538,0.2092,
+      0.5608,1.2648,-1.036,-0.6181,-0.4332,0.0002,0.4918,0.6809,0.4839,
+      -1.1141,-0.5195,-0.1117,0.0991,0.5069,1.1064,-0.6564,-0.6412,-0.4505,
+      -0.0005,0.42,0.5775,0.7198,0.0062,
+    ];
+    const WINDOWED_DS = [
+      0,-0.0078,-0.0173,-0.0009,0.0357,0.0966,0.2972,-0.344,-0.241,
+      -0.1616,0.0049,0.3607,0.6193,0.3359,-0.997,-0.5211,-0.0491,0.1993,
+      0.55,1.2604,-1.0356,-0.6121,-0.4195,0.0002,0.4376,0.5686,0.3741,
+      -0.7833,-0.3262,-0.0614,0.0466,0.1981,0.3497,-0.1605,-0.115,-0.0552,
+      -0,0.0165,0.0082,0.0011,0,
+    ];
+    const SPEC_HZ = [
+      "0","","31","","62","","94","","125","","156","","188","","219","","250","","281","","312","","344","","375","","406",
+      "","438","","469","","500","","531","","562","","594","","625","","656","","688","","719","","750","","781","","812",
+      "","844","","875","","906","","938","","969","","1000","","1031","","1062","","1094","","1125","","1156","","1188","",
+      "1219","","1250","","1281","","1312","","1344","","1375","",
+    ];
+    const SPEC_MAG = [
+      0,0,0,0,0,0,0,0,0,0,0.1,0.1,0.2,0.3,0.9,3.5,75.2,356.7,
+      10.3,1.6,0.5,0.2,0.1,0.1,0,0,0,0,0,0,0,0.1,0.6,109.9,102.3,
+      0.6,0.1,0,0,0,0,0,0,0,0,0,0.1,0.2,0.5,3.6,122.6,21.6,1.1,
+      0.3,0.1,0.1,0,0,0,0,0,0,0,0,0,0.1,1.5,105.7,1.2,0.1,0,0,
+      0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+    ];
+
+    document.getElementById("root").innerHTML = `
+      <h1>What BIN_HZ and spectrum() actually return</h1>
+      <p class="lede">Live numpy from transcribe.py:45–56, run on the first 2048 samples of C4 (MIDI 60 = 261.63 Hz). Source: transcribe.py · one 128 ms frame.</p>
+      ${statsHtml([
+        { value: "1025", label: "bins (FRAME/2 + 1)" },
+        { value: "7.8125 Hz", label: "spacing = SR / FRAME" },
+        { value: "0 … 8000 Hz", label: "DC to Nyquist" },
+      ])}
+      <h2>BIN_HZ — the frequency ruler</h2>
+      <p><code>np.fft.rfftfreq(2048, 1/16000)</code> is just <code>i * 7.8125</code> for i = 0 … 1024. Same length as the spectrum it will later index.</p>
+      <div class="grid grid-2">
+        ${card("First 12 bins", tableHtml({
+          headers: ["index i", "BIN_HZ[i]"],
+          align: ["right", "right"],
+          rows: [["0","0.0000"],["1","7.8125"],["2","15.6250"],["3","23.4375"],["4","31.2500"],["5","39.0625"],["6","46.8750"],["7","54.6875"],["8","62.5000"],["9","70.3125"],["10","78.1250"],["11","85.9375"]],
+        }))}
+        <div class="stack">
+          ${card("Last 4 bins", tableHtml({
+            headers: ["index i", "BIN_HZ[i]"],
+            align: ["right", "right"],
+            rows: [["1021","7976.5625"],["1022","7984.3750"],["1023","7992.1875"],["1024","8000.0000"]],
+          }))}
+          ${callout("info", "Printed as numpy would", `<code>[0. 7.8125 15.625 23.4375 … 7984.375 7992.1875 8000. ]</code>`)}
+        </div>
+      </div>
+      <h2>spectrum(frame) — C4 through each line</h2>
+      <p>Input is <code>frame</code>: 2048 float64 samples (~128 ms of the decaying harmonic stack). Then taper, multiply, rfft, abs.</p>
+      <div class="grid grid-3">
+        ${card("frame[:8]", `<p class="small">Raw waveform, still loud at the cut.</p><code class="block-code">[0. 0.4055 0.7793 1.0938 1.3285 1.4725 1.5250 1.4954]</code>`, "line 50–53")}
+        ${card("hanning[:8] and mid", `<p class="small">0 at both edges, ~1 in the middle.</p><code class="block-code">[0. 0.000002 0.000009 0.000021 …]</code><p class="small">mid: [0.999995 1. 1. 0.999995 0.999985]</p>`, "line 50")}
+        ${card("windowed[:8]", `<p class="small">frame * taper. Edges crushed to ~0.</p><code class="block-code">[0. 0.000001 0.000007 0.000023 0.000050 0.000087 0.000129 0.000173]</code>`, "line 51–53")}
+      </div>
+      ${card("frame vs windowed (one 128 ms C4 frame)", `
+        ${lineChart({ categories: WAVE_MS, series: [{ name: "frame (raw)", data: FRAME_DS }, { name: "windowed = frame * hanning", data: WINDOWED_DS }], height: 180, fill: true })}
+        <p class="caption">X: time (ms) · Y: amplitude · downsampled 2048 → 41 points. The Hann window leaves the middle almost untouched and kills the discontinuity at 0 ms / 128 ms that would otherwise leak into fake frequencies.</p>
+      `)}
+      <h2>rfft — 1025 complex numbers</h2>
+      <p><code>np.fft.rfft(windowed)</code> dtype complex128, shape (1025,). Each bin is strength + phase. Most bins are ~0; energy piles up near C4 and its harmonics. C4 is 261.63 Hz, which is not on a bin center — nearest is bin 33 at 257.81 Hz, so the peak splits across 33 and 34.</p>
+      <div class="grid grid-2">
+        ${card("Quiet bins (start of the array)", tableHtml({
+          headers: ["bin", "Hz", "complex", "|z|"],
+          align: ["right", "right", "left", "right"],
+          rows: [
+            ["0","0.0","-0.0075 + 0.0000j","0.0075"],
+            ["1","7.8","-0.0075 + 0.0000j","0.0075"],
+            ["2","15.6","-0.0076 + 0.0001j","0.0076"],
+            ["3","23.4","-0.0078 + 0.0001j","0.0078"],
+            ["4","31.2","-0.0081 + 0.0002j","0.0081"],
+            ["5","39.1","-0.0085 + 0.0002j","0.0085"],
+            ["6","46.9","-0.0090 + 0.0003j","0.0090"],
+            ["7","54.7","-0.0096 + 0.0003j","0.0096"],
+          ],
+        }))}
+        ${card("Bins 28–40, around the fundamental", tableHtml({
+          headers: ["bin", "Hz", "complex", "|z|"],
+          align: ["right", "right", "left", "right"],
+          tones: [,,,,,"info","info"],
+          rows: [
+            ["28","218.75","-0.86 + 0.06j","0.86"],
+            ["29","226.56","-1.59 + 0.12j","1.60"],
+            ["30","234.38","-3.50 + 0.32j","3.52"],
+            ["31","242.19","-10.53 + 1.23j","10.60"],
+            ["32","250.00","-73.36 + 16.60j","75.22"],
+            ["33","257.81","+361.28 − 28.19j","362.37"],
+            ["34","265.62","-356.67 − 1.80j","356.67"],
+            ["35","273.44","+69.13 + 10.81j","69.97"],
+            ["36","281.25","+10.25 + 0.56j","10.26"],
+            ["37","289.06","+3.44 + 0.10j","3.44"],
+            ["38","296.88","+1.57 + 0.03j","1.57"],
+            ["39","304.69","+0.85 + 0.01j","0.85"],
+            ["40","312.50","+0.51 + 0.00j","0.51"],
+          ],
+        }), "C4 ≈ 261.63 Hz")}
+      </div>
+      ${card("Magnitude returned by spectrum() — C4, 0–1400 Hz", `
+        ${lineChart({ categories: SPEC_HZ, series: [{ name: "magnitude", data: SPEC_MAG }], height: 220, fill: true })}
+        <p class="caption">X: frequency (Hz) · Y: |rfft| · every 2nd bin, truncated at 1400 Hz. Four spikes = fundamental + 3 harmonics. Remaining bins stay ~0 out to 8000 Hz.</p>
+      `, "line 55 · np.abs(freqs)")}
+      ${card("The four peaks (what top_peaks would report)", tableHtml({
+        headers: ["partial", "ideal Hz", "bin", "BIN_HZ[bin]", "complex", "|z| = spectrum"],
+        align: ["left", "right", "right", "right", "left", "right"],
+        tones: ["info"],
+        rows: [
+          ["1× C4","261.63","33","257.81","+361.28 − 28.19j","362.37"],
+          ["2×","523.25","67","523.44","−15.44 − 211.06j","211.63"],
+          ["3×","784.88","100","781.25","+121.23 − 18.41j","122.62"],
+          ["4×","1046.50","134","1046.88","−15.38 − 104.57j","105.70"],
+        ],
+      }))}
+      ${callout("", "What gets thrown away", `Phase (the imaginary part, and the sign of the real part) is dropped by <code>np.abs</code>. Bin 33 and 34 have almost the same magnitude but opposite phase; after abs they look like one smeared peak. The model later sees only those 1025 magnitudes per slot.`)}
+    `;
+  </script>
+</body>
+</html>

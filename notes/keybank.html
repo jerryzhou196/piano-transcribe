@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Keybank — piano-transcribe notes</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+    onload="renderMathInElement(document.body, {delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}]})"></script>
+</head>
+<body>
+  <nav id="nav" class="site-nav"></nav>
+  <main id="root"></main>
+  <script src="common.js"></script>
+  <script>
+    nav("keybank");
+    const RATE = 44100, N = 4096;
+    const NAMES = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
+    const MIDI = Array.from({ length: 88 }, (_, i) => 21 + i);
+    const FREQS = MIDI.map((m) => 440 * Math.pow(2, (m - 69) / 12));
+    const name = (m) => `${NAMES[m % 12]}${Math.floor(m / 12) - 1}`;
+    const NOTES = { C4: 261.63, E4: 329.63, G4: 392 };
+    const SIGNALS = [
+      { id: "c4", label: "C4 sine", freqs: [NOTES.C4], played: [60] },
+      { id: "chord", label: "C major", freqs: [NOTES.C4, NOTES.E4, NOTES.G4], played: [60, 64, 67] },
+    ];
+    let signalId = "chord";
+
+    function keybank(x) {
+      const out = new Array(88);
+      for (let k = 0; k < 88; k++) {
+        let re = 0, im = 0;
+        const f = FREQS[k];
+        for (let n = 0; n < N; n++) {
+          const ang = 2 * Math.PI * f * n / RATE;
+          re += x[n] * Math.cos(ang);
+          im += x[n] * Math.sin(ang);
+        }
+        out[k] = Math.hypot(re, im) / N;
+      }
+      return out;
+    }
+
+    function keyboard(mags, played) {
+      const w = 840, h = 160, pl = 8, pr = 8, pt = 8, pb = 28;
+      const iw = w - pl - pr, kw = iw / 88, max = Math.max(...mags, 0.05);
+      const on = new Set(played);
+      const bars = mags.map((v, k) => {
+        const midi = MIDI[k];
+        const bh = (v / max) * (h - pt - pb);
+        const fill = on.has(midi) ? T.accent : T.muted;
+        return `<rect x="${pl + k * kw}" y="${pt + (h - pt - pb) - bh}" width="${Math.max(kw - 0.4, 0.5)}" height="${bh}" fill="${fill}" opacity="${on.has(midi) ? 1 : 0.45}"/>`;
+      }).join("");
+      const labs = [{ m: 21, l: "A0" }, { m: 60, l: "C4" }, { m: 64, l: "E4" }, { m: 67, l: "G4" }, { m: 108, l: "C8" }]
+        .map((x) => `<text x="${pl + (x.m - 21 + 0.5) * kw}" y="${h - 8}" text-anchor="middle" fill="${T.faint}" font-size="10">${x.l}</text>`).join("");
+      return `<svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}">${bars}${labs}</svg>`;
+    }
+
+    function matrixSketch() {
+      const w = 720, h = 220, pl = 70, pr = 40, pt = 20, pb = 28;
+      const rows = 8, cols = 18;
+      const cw = (w - pl - pr - 80) / cols, rh = (h - pt - pb) / rows;
+      const cells = Array.from({ length: rows * cols }, (_, i) => {
+        const r = Math.floor(i / cols), c = i % cols;
+        return `<rect x="${pl + c * cw}" y="${pt + r * rh}" width="${cw - 1}" height="${rh - 1}" fill="${T.accent}" opacity="${0.15 + 0.55 * ((r + c) % 5) / 5}"/>`;
+      }).join("");
+      const vec = Array.from({ length: rows }, (_, r) =>
+        `<rect x="${pl + cols * cw + 18}" y="${pt + r * rh}" width="22" height="${rh - 1}" fill="${T.fill2}"/>`).join("");
+      const out = Array.from({ length: rows }, (_, r) =>
+        `<rect x="${pl + cols * cw + 58}" y="${pt + r * rh}" width="22" height="${rh - 1}" fill="${T.accent}" opacity="${r === 3 || r === 4 || r === 5 ? 0.95 : 0.2}"/>`).join("");
+      return `<svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}">
+        ${cells}${vec}${out}
+        <text x="${pl}" y="${pt - 6}" fill="${T.faint}" font-size="11">P  88 × N</text>
+        <text x="${pl + cols * cw + 18}" y="${pt - 6}" fill="${T.faint}" font-size="11">x</text>
+        <text x="${pl + cols * cw + 58}" y="${pt - 6}" fill="${T.faint}" font-size="11">|Px|/N</text>
+        <text x="${pl - 8}" y="${pt + 12}" text-anchor="end" fill="${T.faint}" font-size="10">A0</text>
+        <text x="${pl - 8}" y="${h - pb - 2}" text-anchor="end" fill="${T.faint}" font-size="10">C8</text>
+        <text x="${pl}" y="${h - 8}" fill="${T.faint}" font-size="10">n = 0</text>
+        <text x="${pl + cols * cw - 8}" y="${h - 8}" text-anchor="end" fill="${T.faint}" font-size="10">n = N−1</text>
+      </svg>`;
+    }
+
+    function render() {
+      const signal = SIGNALS.find((s) => s.id === signalId);
+      const x = makeSignal(signal.freqs, N, RATE);
+      const kb = keybank(x);
+      const top = kb.map((v, i) => ({ i, v })).sort((a, b) => b.v - a.v).slice(0, 6);
+      const lo = MIDI.findIndex((m) => m === 48), hi = MIDI.findIndex((m) => m === 72);
+      const mid = kb.slice(lo, hi + 1);
+
+      document.getElementById("root").innerHTML = `
+        <h1>88 probes, one matrix–vector product</h1>
+        <p class="lede">Those two lines in <code>layer05_keybank.py</code> are an 88-row nonuniform DFT: one complex probe per piano key, then a matrix–vector product against the audio chunk. Frequencies sit on equal temperament, not on the FFT’s linear bin grid.</p>
+        ${card("layer05_keybank.py:29–30", `<p><code>probes = np.exp(-2j * np.pi * cycles)</code></p>
+          <p><code>keybank = np.abs(probes @ chunk) / N</code></p>`)}
+        <h2>Probe bank</h2>
+        <p>One complex sinusoid per key, one sample per column:</p>
+        $$P_{k,n} = \\exp\\bigl(-2\\pi i\\, f_k t_n\\bigr) = e^{-2\\pi i\\, f_k n / R}
+        \\qquad
+        \\begin{aligned}
+        k &= 0,\\ldots,87 \\\\
+        n &= 0,\\ldots,N-1
+        \\end{aligned}$$
+        <p>In matrix form (elementwise exp):</p>
+        $$\\mathbf{P} = \\exp\\bigl(-2\\pi i\\,\\mathbf{f}\\,\\mathbf{t}^{\\!\\top}\\bigr) \\in \\mathbb{C}^{88\\times N}$$
+        ${matrixSketch()}
+        <p class="caption">Cartoon of $\\mathbf{P}\\mathbf{x}$: each row is one key’s probe; the product is 88 inner products at once. Highlighted output rows are keys with energy.</p>
+        <h2>Keybank</h2>
+        <p>Correlate every probe with the chunk, keep magnitude, scale by length:</p>
+        $$\\mathbf{k} = \\frac{1}{N}\\bigl|\\mathbf{P}\\,\\mathbf{x}\\bigr| \\in \\mathbb{R}^{88}$$
+        <p>Unrolled, key $k$ is the same correlator as layer 3, evaluated at that key’s frequency:</p>
+        $$k_k = \\frac{1}{N}\\left|\\sum_{n=0}^{N-1} x_n\\, e^{-2\\pi i\\, f_k n / R}\\right|$$
+        <p>$\\mathbf{P}\\mathbf{x}$ is 88 inner products at once. The absolute value drops starting phase, same as <code>hypot(re, im)</code> in layer 3; dividing by $N$ keeps the scale independent of window length.</p>
+        <p class="small">Signal</p>
+        <div class="row" id="sigs"></div>
+        ${statsHtml([
+          { value: `${name(MIDI[0])}=${FREQS[0].toFixed(2)} Hz`, label: "lowest key" },
+          { value: `${name(MIDI[87])}=${FREQS[87].toFixed(1)} Hz`, label: "highest key" },
+          { value: "5.9%", label: "neighbours differ by, never a fixed Hz" },
+          { value: String(N), label: "window samples (~93 ms)" },
+        ])}
+        <h2>Loudest keys</h2>
+        ${tableHtml({
+          headers: ["key", "Hz", "magnitude"],
+          align: ["right", "right", "right"],
+          tones: top.map((t) => signal.played.includes(MIDI[t.i]) ? "success" : undefined),
+          rows: top.map((t) => [name(MIDI[t.i]), FREQS[t.i].toFixed(2), t.v.toFixed(4)]),
+        })}
+        <h2>All 88 keys</h2>
+        ${keyboard(kb, signal.played)}
+        <p class="caption">Accent bars are the notes in the current signal. Same math as the matrix product, run in this page (4096 samples at 44.1 kHz).</p>
+        <h2>C3 … C5</h2>
+        ${tableHtml({
+          headers: ["key", "Hz", "energy"],
+          align: ["right", "right", "left"],
+          tones: MIDI.slice(lo, hi + 1).map((m) => signal.played.includes(m) ? "success" : undefined),
+          rows: mid.map((v, j) => {
+            const m = MIDI[lo + j];
+            const bar = `<div class="bar-track" style="width:220px"><div class="bar-fill ${signal.played.includes(m) ? "on" : ""}" style="width:${Math.min(100, v * 300)}%"></div></div>`;
+            return [name(m), FREQS[lo + j].toFixed(1), bar];
+          }),
+        })}
+      `;
+      document.getElementById("sigs").innerHTML = pillsHtml(SIGNALS, signalId, "s");
+      document.querySelectorAll("#sigs .pill").forEach((b) => { b.onclick = () => { signalId = b.dataset.id; render(); }; });
+      if (window.renderMathInElement) {
+        renderMathInElement(document.getElementById("root"), {
+          delimiters: [{ left: "$$", right: "$$", display: true }, { left: "$", right: "$", display: false }],
+        });
+      }
+    }
+    render();
+  </script>
+</body>
+</html>

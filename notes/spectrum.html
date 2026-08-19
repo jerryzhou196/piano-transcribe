@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Spectrum lines — piano-transcribe notes</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <nav id="nav" class="site-nav"></nav>
+  <main id="root"></main>
+  <script src="common.js"></script>
+  <script>
+    nav("spectrum");
+    const SR = 16000, FRAME = 2048, SLOT_DUR = 0.5, STEP = SLOT_DUR * SR, BIN = SR / FRAME;
+    const N_BINS = FRAME / 2 + 1, FRAME_MS = (FRAME / SR) * 1000, HZ_MAX = 2100;
+    const N_KEEP = Math.floor(HZ_MAX / BIN) + 1, DECAY = 3, Y_ABS = 1 + 1/2 + 1/3 + 1/4;
+    const N_DRAW = 320, N_TIMELINE = 240;
+    const EVENTS = [
+      { midi: [60], name: "C4" }, { midi: [62], name: "D4" }, { midi: [64], name: "E4" },
+      { midi: [65], name: "F4" }, { midi: [67], name: "G4" },
+      { midi: [60, 64, 67], name: "C major" }, { midi: [60, 72], name: "C4+C5" },
+    ];
+    const SOURCE = [
+      { n: 44, text: "BIN_HZ = np.fft.rfftfreq(FRAME, 1 / SR)", id: "44" },
+      { n: 47, text: "def spectrum(frame):" },
+      { n: 49, text: "    windowed = frame * np.hanning(FRAME)", id: "49" },
+      { n: 50, text: "    return np.abs(np.fft.rfft(windowed))", id: "50" },
+      { n: 53, text: "def featurize(audio, n_slots, dur=0.5):" },
+      { n: 55, text: "    step = int(dur * SR)", id: "55" },
+      { n: 56, text: "    return np.stack([spectrum(audio[i*step:i*step+FRAME]) for i in range(n_slots)])", id: "56" },
+      { n: 59, text: "def top_peaks(spec, n=5):" },
+      { n: 61, text: "    idx = np.argsort(spec)[-n:][::-1]", id: "61" },
+      { n: 62, text: "    return [(BIN_HZ[i], spec[i]) for i in idx]", id: "62" },
+    ];
+    const TITLE = {
+      "44": "Line 44 — label every FFT bin with a frequency",
+      "49": "Line 49 — fade the edges of the 128 ms clip",
+      "50": "Line 50 — FFT, then keep magnitude only",
+      "55": "Line 55 — how many samples is one 0.5 s slot?",
+      "56": "Line 56 — slice each attack, spectrum, stack",
+      "61": "Line 61 — indices of the 5 loudest bins",
+      "62": "Line 62 — turn those indices into (Hz, magnitude)",
+    };
+
+    const HANN = hanning(FRAME);
+    const C4 = mixChord([60], FRAME, FRAME / SR, DECAY);
+    const WINDOWED = C4.map((v, i) => v * HANN[i]);
+    const FFT = fft(WINDOWED);
+    const PEAK_IDX = topIdx(FFT.mag, 5);
+    const PEAK_BIN = PEAK_IDX[0];
+    const SLOTS = EVENTS.map((e, i) => {
+      const frame = mixChord(e.midi, FRAME, FRAME / SR, DECAY);
+      const windowed = frame.map((v, j) => v * HANN[j]);
+      const { mag } = fft(windowed);
+      return { ...e, i, slice: `[${i * STEP}:${i * STEP + FRAME}]`, spec: mag.slice(0, N_KEEP),
+        peaks: topIdx(mag, 5).map((bin) => ({ bin, hz: bin * BIN, mag: mag[bin] })) };
+    });
+    const TIMELINE = EVENTS.map((e) => mixChord(e.midi, N_TIMELINE, SLOT_DUR, DECAY)).flat();
+    const SAMPLE_NS = [0, 1, 512, 1024, 1536, 2047];
+
+    let line = "44";
+
+    function freqPlot(series, yMax, xLabel, marks) {
+      const w = 840, h = 200, pl = 48, pr = 12, pt = 10, pb = 28;
+      const iw = w - pl - pr;
+      const xOf = (bin) => pl + (bin / (N_KEEP - 1)) * iw;
+      const ticks = [0, 500, 1000, 1500, 2000];
+      const yLo = series.length > 1 ? -yMax : 0;
+      const markL = (marks || []).map((bin) =>
+        `<line x1="${xOf(bin)}" y1="${pt}" x2="${xOf(bin)}" y2="${h - pb}" stroke="${T.line}" stroke-dasharray="3 3"/>`).join("");
+      const paths = series.map((s, i) =>
+        `<path d="${toPath(s.ys, w, h, yLo, yMax, pl, pr, pt, pb)}" fill="none" stroke="${s.accent ? T.accent : T.muted}" stroke-width="${s.accent ? 1.6 : 1.1}" opacity="${s.accent ? 1 : 0.7}"/>`).join("");
+      const zero = yLo < 0
+        ? `<line x1="${pl}" y1="${pt + ((yMax - 0) / (2 * yMax)) * (h - pt - pb)}" x2="${w - pr}" y2="${pt + ((yMax - 0) / (2 * yMax)) * (h - pt - pb)}" stroke="${T.line}" stroke-dasharray="4 4"/>` : "";
+      return `<svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}">
+        <line x1="${pl}" y1="${h - pb}" x2="${w - pr}" y2="${h - pb}" stroke="${T.line}"/>
+        <line x1="${pl}" y1="${pt}" x2="${pl}" y2="${h - pb}" stroke="${T.line}"/>
+        ${zero}${markL}${paths}
+        ${ticks.map((hz) => `<text x="${xOf(hz / BIN)}" y="${h - 8}" text-anchor="${hz === 0 ? "start" : "middle"}" fill="${T.faint}" font-size="10">${hz}</text>`).join("")}
+        <text x="${pl - 6}" y="${pt + 4}" text-anchor="end" fill="${T.faint}" font-size="10">${yMax.toFixed(0)}</text>
+        <text x="${(pl + w - pr) / 2}" y="${h}" text-anchor="middle" fill="${T.faint}" font-size="10">${xLabel}</text>
+      </svg>`;
+    }
+
+    function complexPlane() {
+      const re = FFT.re[PEAK_BIN], im = FFT.im[PEAK_BIN], mag = FFT.mag[PEAK_BIN];
+      const w = 260, h = 220, m = 36, s = Math.min(w, h) / 2 - m, scale = s / (mag * 1.15);
+      const cx = w / 2, cy = h / 2, px = cx + re * scale, py = cy - im * scale;
+      return `<svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}">
+        <line x1="${m}" y1="${cy}" x2="${w - m}" y2="${cy}" stroke="${T.line}"/>
+        <line x1="${cx}" y1="${m}" x2="${cx}" y2="${h - m}" stroke="${T.line}"/>
+        <line x1="${cx}" y1="${cy}" x2="${px}" y2="${py}" stroke="${T.accent}" stroke-width="2"/>
+        <circle cx="${px}" cy="${py}" r="4" fill="${T.accent}"/>
+        <text x="${cx}" y="${h - 8}" text-anchor="middle" fill="${T.faint}" font-size="10">real</text>
+        <text x="12" y="${cy - 8}" fill="${T.faint}" font-size="10">imag</text>
+        <text x="${px + 8}" y="${py - 6}" fill="${T.text}" font-size="11">${re.toFixed(0)} ${im < 0 ? "−" : "+"} ${Math.abs(im).toFixed(0)}j</text>
+        <text x="${cx + 8}" y="${cy + 28}" fill="${T.muted}" font-size="11">|z| = ${mag.toFixed(1)}</text>
+      </svg>`;
+    }
+
+    function sliceTimeline() {
+      const w = 840, h = 150, pl = 8, pr = 8, pt = 8, pb = 24;
+      const iw = w - pl - pr, n = EVENTS.length, slotW = iw / n, frameFrac = FRAME / STEP;
+      const zeroY = pt + 0.5 * (h - pt - pb);
+      const rects = EVENTS.map((_, i) =>
+        `<rect x="${pl + i * slotW}" y="${pt}" width="${slotW * frameFrac}" height="${h - pt - pb}" fill="${T.fill}"/>`).join("");
+      const divs = Array.from({ length: n + 1 }, (_, i) =>
+        `<line x1="${pl + i * slotW}" y1="${pt}" x2="${pl + i * slotW}" y2="${h - pb}" stroke="${T.line}"/>`).join("");
+      const labs = EVENTS.map((e, i) =>
+        `<text x="${pl + (i + 0.5) * slotW}" y="${h - 8}" text-anchor="middle" fill="${T.faint}" font-size="10">i=${i}</text>`).join("");
+      return `<svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}">
+        ${rects}${divs}
+        <line x1="${pl}" y1="${zeroY}" x2="${w - pr}" y2="${zeroY}" stroke="${T.line}" stroke-dasharray="4 4"/>
+        <path d="${toPath(TIMELINE, w, h, -Y_ABS, Y_ABS, pl, pr, pt, pb)}" fill="none" stroke="${T.accent}" stroke-width="1.2"/>
+        ${labs}
+      </svg>`;
+    }
+
+    function stackHeat() {
+      const w = 840, h = 180, pl = 72, pr = 8, pt = 6, pb = 24;
+      const iw = w - pl - pr, ih = h - pt - pb, rh = ih / SLOTS.length;
+      const cells = SLOTS.map((slot, r) => {
+        const max = Math.max(...slot.spec, 1e-9);
+        const cw = iw / slot.spec.length;
+        return slot.spec.map((mag, c) =>
+          `<rect x="${pl + c * cw}" y="${pt + r * rh}" width="${Math.ceil(cw) + 0.4}" height="${rh - 1}" fill="${T.accent}" opacity="${0.08 + (mag / max) * 0.92}"/>`).join("");
+      }).join("");
+      const labs = SLOTS.map((slot, r) =>
+        `<text x="${pl - 8}" y="${pt + r * rh + rh * 0.72}" text-anchor="end" fill="${T.faint}" font-size="10">X[${r}]</text>`).join("");
+      const ticks = [0, 500, 1000, 1500, 2000].map((hz) =>
+        `<text x="${pl + (hz / HZ_MAX) * iw}" y="${h - 6}" text-anchor="${hz === 0 ? "start" : "middle"}" fill="${T.faint}" font-size="10">${hz} Hz</text>`).join("");
+      return `<svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}">${cells}${labs}${ticks}</svg>`;
+    }
+
+    function panel() {
+      const c4 = midiToHz(60);
+      if (line === "44") {
+        return `<p><code>rfftfreq(n, d)</code> writes the x-axis for a real FFT: bin <code>k</code> means frequency <code>k / (n·d)</code> Hz. Here <code>n=FRAME=2048</code> and <code>d=1/SR=62.5µs</code>, so the spacing is <code>SR/FRAME = 7.8125 Hz</code>.</p>
+          ${statsHtml([
+            { value: "(1025,)", label: "BIN_HZ.shape  = n/2+1" },
+            { value: "7.8125 Hz", label: "BIN_HZ[1]  = SR/FRAME" },
+            { value: "0 Hz", label: "BIN_HZ[0]  DC" },
+            { value: "8000 Hz", label: "BIN_HZ[1024]  Nyquist" },
+          ])}
+          ${tableHtml({
+            headers: ["k", "BIN_HZ[k]", "What that bin is"],
+            align: ["right", "right", "left"],
+            rows: [
+              ["0","0.0000","DC — mean of the window"],
+              ["1","7.8125","One cycle inside the 128 ms frame"],
+              ["2","15.6250","Two cycles"],
+              ["33","257.8125", `Just below C4 (${c4.toFixed(1)} Hz)`],
+              ["34","265.6250","Just above C4 — the note splits across 33 and 34"],
+              ["1024","8000.0000","Nyquist, SR/2 — highest representable frequency"],
+            ],
+          })}
+          <p class="caption">X axis of later plots is this array. Source: numpy <code>rfftfreq</code> with FRAME=2048, SR=16000.</p>`;
+      }
+      if (line === "49") {
+        return `<p>Pointwise multiply. <code>np.hanning(FRAME)</code> is 2048 weights that start at 0, rise to 1 in the middle, and fall back to 0. Edges are silenced so the FFT does not see a click at the wrap-around.</p>
+          <div class="grid grid-3">
+            <div><h3>frame  (2048,)</h3>${waveSvg({ series: [{ ys: downsample(C4, N_DRAW), color: T.accent }], yAbs: Y_ABS, yLabel: "x", xLabel: "sample 0 → 2047", w: 400, h: 150 })}</div>
+            <div><h3>np.hanning(FRAME)</h3>${waveSvg({ series: [{ ys: downsample(HANN, N_DRAW), color: T.accent }], yAbs: 1.05, yLabel: "w", xLabel: "0 at edges, 1 at center", w: 400, h: 150 })}</div>
+            <div><h3>windowed = frame * hann</h3>${waveSvg({ series: [{ ys: downsample(WINDOWED, N_DRAW), color: T.accent }], yAbs: Y_ABS, yLabel: "x·w", xLabel: "same 2048 samples, edges faded", w: 400, h: 150, fillEnv: downsample(HANN, N_DRAW) })}</div>
+          </div>
+          ${tableHtml({
+            headers: ["n", "frame[n]", "hann[n]", "windowed[n]"],
+            align: ["right", "right", "right", "right"],
+            rows: SAMPLE_NS.map((n) => [String(n), C4[n].toFixed(4), HANN[n].toFixed(4), WINDOWED[n].toFixed(4)]),
+          })}
+          <p class="caption">Running example is slot 0 (C4 attack). hann[0] = hann[2047] = 0, so those samples are forced to 0 regardless of the wave.</p>`;
+      }
+      if (line === "50") {
+        const re = FFT.re[PEAK_BIN], im = FFT.im[PEAK_BIN], mag = FFT.mag[PEAK_BIN];
+        const reKeep = FFT.re.slice(0, N_KEEP), imKeep = FFT.im.slice(0, N_KEEP), magKeep = FFT.mag.slice(0, N_KEEP);
+        const yC = Math.max(...reKeep.map(Math.abs), ...imKeep.map(Math.abs));
+        const yM = Math.max(...magKeep);
+        return `<p>One line, two calls. <code>rfft</code> turns 2048 real samples into 1025 complex bins. <code>abs</code> replaces each <code>a+bi</code> with <code>sqrt(a²+b²)</code> — phase is thrown away.</p>
+          ${statsHtml([
+            { value: "(2048,)", label: "windowed  float64" },
+            { value: "(1025,) complex", label: "rfft(windowed)" },
+            { value: "(1025,) float", label: "abs(...)  the return" },
+          ])}
+          <h2>np.fft.rfft(windowed) — real and imaginary parts</h2>
+          ${freqPlot([{ ys: reKeep }, { ys: imKeep, accent: true }], yC, "Frequency (Hz) — gray = real, accent = imag")}
+          <div class="grid grid-2">
+            <div>
+              <h2>np.abs of the loudest bin (k=${PEAK_BIN})</h2>
+              <p>rfft[${PEAK_BIN}] = ${re.toFixed(1)} ${im < 0 ? "−" : "+"} ${Math.abs(im).toFixed(1)}j. That is one arrow on the complex plane. <code>abs</code> is the arrow’s length, ${mag.toFixed(1)} — energy near ${(PEAK_BIN * BIN).toFixed(1)} Hz, just under C4.</p>
+            </div>
+            ${complexPlane()}
+          </div>
+          <h2>np.abs(...) — the value spectrum() actually returns</h2>
+          ${freqPlot([{ ys: magKeep, accent: true }], yM, "Frequency (Hz) — magnitude |rFFT|", PEAK_IDX.filter((b) => b < N_KEEP))}
+          ${tableHtml({
+            headers: ["k", "rfft[k]", "|rfft[k]|"],
+            align: ["right", "left", "right"],
+            rows: PEAK_IDX.map((k) => [String(k), `${FFT.re[k].toFixed(1)} ${FFT.im[k] < 0 ? "−" : "+"} ${Math.abs(FFT.im[k]).toFixed(1)}j`, FFT.mag[k].toFixed(1)]),
+          })}`;
+      }
+      if (line === "55") {
+        return `<p><code>dur</code> defaults to 0.5 seconds, <code>SR</code> is 16000 samples per second. <code>int(0.5 * 16000) = 8000</code>.</p>
+          ${statsHtml([
+            { value: "0.5", label: "dur  seconds" },
+            { value: "16000", label: "SR  samples/sec" },
+            { value: "8000", label: "step  samples" },
+          ])}
+          <div class="small" style="display:flex;justify-content:space-between;margin-bottom:4px"><span>One slot = 8000 samples (500 ms)</span><span>frame uses ${FRAME} (${FRAME_MS.toFixed(0)} ms)</span></div>
+          <div class="usage"><div class="seg" style="width:${(FRAME / STEP) * 100}%"></div></div>
+          <p class="caption">Remainder of the bar is the decay that line 56 will not analyze. Source: <code>step = int(dur * SR)</code>.</p>`;
+      }
+      if (line === "56") {
+        return `<p>For each slot <code>i</code>, slice <code>audio[i*8000 : i*8000+2048]</code> (the shaded attack), run <code>spectrum</code>, then <code>np.stack</code> glues the 7 results into one matrix.</p>
+          <h2>audio[i * step : i * step + FRAME]</h2>
+          ${sliceTimeline()}
+          ${tableHtml({
+            headers: ["i", "slice", "samples", "played"],
+            align: ["right", "left", "right", "left"],
+            rows: SLOTS.map((s) => [String(s.i), `audio${s.slice}`, "2048", s.name]),
+          })}
+          <h2>np.stack(...) → X.shape = (7, 1025)</h2>
+          ${stackHeat()}
+          <p class="caption">Row <code>i</code> is the magnitude spectrum of slot <code>i</code>. Columns are <code>BIN_HZ</code>. Demo audio is 7 × 8000 = 56000 samples; this returns 7 × 1025 numbers.</p>`;
+      }
+      if (line === "61") {
+        const order = FFT.mag.map((_, i) => i).sort((a, b) => FFT.mag[a] - FFT.mag[b]);
+        const last8 = order.slice(-8), last5 = order.slice(-5);
+        return `<p><code>np.argsort(spec)</code> returns bin indices in <em>ascending</em> magnitude. <code>[-n:]</code> takes the last 5 — the loudest, still ascending. <code>[::-1]</code> reverses them so index 0 is the single loudest bin.</p>
+          ${freqPlot([{ ys: FFT.mag.slice(0, N_KEEP), accent: true }], Math.max(...FFT.mag), "C4 magnitude spectrum — dashed lines are the 5 bins argsort keeps", PEAK_IDX.filter((b) => b < N_KEEP))}
+          ${tableHtml({
+            headers: ["Expression", "Value (C4, n=5)"],
+            rows: [
+              ["spec.shape", "(1025,)"],
+              ["np.argsort(spec)[-8:]", `[${last8.join(", ")}]`],
+              ["[-n:]  last 5, still quiet→loud", `[${last5.join(", ")}]`],
+              ["[::-1]  loudest first", `[${PEAK_IDX.join(", ")}]`],
+            ],
+          })}
+          ${callout("info", "argsort returns indices, not values", `<code>idx</code> is which bins won — not the magnitudes themselves. Line 62 looks those indices up in both <code>BIN_HZ</code> and <code>spec</code>.`)}`;
+      }
+      return `<p>Zip the winning indices with the two arrays they index. For each <code>i</code> in <code>idx</code>, emit the pair <code>(BIN_HZ[i], spec[i])</code>.</p>
+        ${tableHtml({
+          headers: ["i", "BIN_HZ[i] (Hz)", "spec[i]", "pair"],
+          align: ["right", "right", "right", "left"],
+          rows: SLOTS[0].peaks.map((p) => [String(p.bin), p.hz.toFixed(4), p.mag.toFixed(2), `(${p.hz.toFixed(1)}, ${p.mag.toFixed(1)})`]),
+        })}
+        <p>Same 5 pairs for every demo slot:</p>
+        ${tableHtml({
+          headers: ["slot", "played", "top 5 Hz"],
+          align: ["right", "left", "left"],
+          rows: SLOTS.map((s) => [String(s.i), s.name, s.peaks.map((p) => p.hz.toFixed(1)).join("  ")]),
+        })}
+        <p class="caption">C4’s 261.6 Hz fundamental is not a bin center, so it appears as 257.8 and 265.6. C4+C5’s loudest bin is 523.4 Hz: C5’s fundamental stacked on C4’s second harmonic.</p>`;
+    }
+
+    function render() {
+      document.getElementById("root").innerHTML = `
+        <h1>Each line of transcribe.py:44–62</h1>
+        <p class="lede">Click a statement in the listing. Plots use the demo’s first slot (C4) except line 56, which shows all seven.</p>
+        ${card("transcribe.py", `<div class="source" id="src"></div>`, "click a statement")}
+        <h2>${TITLE[line]}</h2>
+        <div id="panel"></div>
+      `;
+      document.getElementById("src").innerHTML = SOURCE.map((row) => {
+        const cls = row.id ? (row.id === line ? "ln click on" : "ln click") : "ln dead";
+        return `<div class="${cls}" ${row.id ? `data-id="${row.id}"` : ""}><span class="n">${row.n}</span><span>${row.text}</span></div>`;
+      }).join("");
+      document.getElementById("panel").innerHTML = panel();
+      document.querySelectorAll("#src .click").forEach((el) => {
+        el.onclick = () => { line = el.dataset.id; render(); };
+      });
+    }
+    render();
+  </script>
+</body>
+</html>

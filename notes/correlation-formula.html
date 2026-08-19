@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Winding — piano-transcribe notes</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <nav id="nav" class="site-nav"></nav>
+  <main id="root"></main>
+  <script src="common.js"></script>
+  <script>
+    nav("correlation-formula");
+    const RATE = 44100, WINDOW = 4096, DRAW_MS = 20;
+    const DRAW_N = Math.round((RATE * DRAW_MS) / 1000);
+    const N_PLOT = 240, N_MASSES = 280;
+    const NOTES = { C4: 261.63, E4: 329.63, G4: 392 };
+    const SIGNALS = [
+      { id: "c4", label: "C4 sine", freqs: [NOTES.C4] },
+      { id: "e4", label: "E4 sine", freqs: [NOTES.E4] },
+      { id: "g4", label: "G4 sine", freqs: [NOTES.G4] },
+      { id: "chord", label: "C major chord", freqs: [NOTES.C4, NOTES.E4, NOTES.G4] },
+    ];
+    const PROBES = [
+      { hz: 200, label: "200 Hz" }, { hz: 261.63, label: "C4" },
+      { hz: 300, label: "300 Hz" }, { hz: 329.63, label: "E4" },
+      { hz: 350, label: "350 Hz" }, { hz: 392, label: "G4" }, { hz: 440, label: "A4" },
+    ];
+    let signalId = "c4", probeHz = 261.63;
+
+    function oneMass(v, theta, n) {
+      const s = 320, m = 40, r = s / 2 - m, c = s / 2, lim = 1.2;
+      const re = v * Math.cos(theta), im = v * Math.sin(theta);
+      const px = c + (re / lim) * r, py = c - (im / lim) * r;
+      const ax = c + (Math.cos(theta) / lim) * r, ay = c - (Math.sin(theta) / lim) * r;
+      const zx = c + (re / lim) * r;
+      return `<svg viewBox="0 0 ${s} ${s}" width="100%" height="${s}">
+        <circle cx="${c}" cy="${c}" r="${r / lim}" fill="none" stroke="${T.line}"/>
+        <line x1="${m}" y1="${c}" x2="${s - m}" y2="${c}" stroke="${T.line}"/>
+        <line x1="${c}" y1="${m}" x2="${c}" y2="${s - m}" stroke="${T.line}"/>
+        <line x1="${c}" y1="${c}" x2="${ax}" y2="${ay}" stroke="${T.muted}" stroke-dasharray="4 3"/>
+        <line x1="${zx}" y1="${c}" x2="${zx}" y2="${py}" stroke="${T.line}" stroke-dasharray="3 3"/>
+        <line x1="${c}" y1="${py}" x2="${px}" y2="${py}" stroke="${T.line}" stroke-dasharray="3 3"/>
+        <line x1="${c}" y1="${c}" x2="${px}" y2="${py}" stroke="${T.accent}" stroke-width="2"/>
+        <circle cx="${px}" cy="${py}" r="5" fill="${T.accent}"/>
+        <text x="${s - 6}" y="${c - 8}" text-anchor="end" fill="${T.faint}" font-size="10">x · cos θ</text>
+        <text x="${c + 8}" y="${m - 6}" fill="${T.faint}" font-size="10">x · sin θ</text>
+        <text x="${px + 8}" y="${py - 6}" fill="${T.text}" font-size="11">n=${n}</text>
+        <text x="${c}" y="${s - 8}" text-anchor="middle" fill="${T.muted}" font-size="11">x·e^(iθ) = ${v.toFixed(2)} ∠ θ</text>
+      </svg>`;
+    }
+
+    function eulerSplit(v, theta) {
+      const s = 320, m = 40, rad = s / 2 - m, c = s / 2, lim = 1.2;
+      const ux = c + (Math.cos(theta) / lim) * rad, uy = c - (Math.sin(theta) / lim) * rad;
+      const px = c + ((v * Math.cos(theta)) / lim) * rad, py = c - ((v * Math.sin(theta)) / lim) * rad;
+      return `<svg viewBox="0 0 ${s} ${s}" width="100%" height="${s}">
+        <circle cx="${c}" cy="${c}" r="${rad / lim}" fill="none" stroke="${T.line}"/>
+        <line x1="${m}" y1="${c}" x2="${s - m}" y2="${c}" stroke="${T.line}"/>
+        <line x1="${c}" y1="${m}" x2="${c}" y2="${s - m}" stroke="${T.line}"/>
+        <line x1="${c}" y1="${c}" x2="${ux}" y2="${uy}" stroke="${T.muted}" stroke-width="1.5"/>
+        <circle cx="${ux}" cy="${uy}" r="4" fill="${T.muted}"/>
+        <line x1="${c}" y1="${c}" x2="${px}" y2="${py}" stroke="${T.accent}" stroke-width="2"/>
+        <circle cx="${px}" cy="${py}" r="5" fill="${T.accent}"/>
+        <text x="${ux + 8}" y="${uy - 6}" fill="${T.muted}" font-size="11">e^(iθ)</text>
+        <text x="${px + 8}" y="${py + 14}" fill="${T.text}" font-size="11">x·e^(iθ)</text>
+        <text x="${s - 6}" y="${c - 8}" text-anchor="end" fill="${T.faint}" font-size="10">real  (cos)</text>
+        <text x="${c + 8}" y="${m - 6}" fill="${T.faint}" font-size="10">imag  (sin)</text>
+      </svg>`;
+    }
+
+    function massCloud(masses, com, highlight) {
+      const s = 360, m = 40, rad = s / 2 - m, c = s / 2, lim = 1.2;
+      const xy = (re, im) => ({ x: c + (re / lim) * rad, y: c - (im / lim) * rad });
+      const g = xy(com.re, com.im), h = highlight ? xy(highlight.re, highlight.im) : null;
+      const dots = masses.map((p) => {
+        const { x, y } = xy(p.re, p.im);
+        return `<circle cx="${x}" cy="${y}" r="1.6" fill="${T.muted}" opacity="0.55"/>`;
+      }).join("");
+      return `<svg viewBox="0 0 ${s} ${s}" width="100%" height="${s}">
+        <circle cx="${c}" cy="${c}" r="${rad / lim}" fill="none" stroke="${T.line}"/>
+        <line x1="${m}" y1="${c}" x2="${s - m}" y2="${c}" stroke="${T.line}"/>
+        <line x1="${c}" y1="${m}" x2="${c}" y2="${s - m}" stroke="${T.line}"/>
+        ${dots}
+        ${h ? `<circle cx="${h.x}" cy="${h.y}" r="5" fill="${T.accent}"/>` : ""}
+        <line x1="${g.x}" y1="${c}" x2="${g.x}" y2="${g.y}" stroke="${T.accent}" stroke-dasharray="3 3"/>
+        <line x1="${c}" y1="${g.y}" x2="${g.x}" y2="${g.y}" stroke="${T.accent}" stroke-dasharray="3 3"/>
+        <line x1="${c}" y1="${c}" x2="${g.x}" y2="${g.y}" stroke="${T.accent}" stroke-width="2"/>
+        <circle cx="${g.x}" cy="${g.y}" r="5" fill="${T.accent}"/>
+        <text x="${g.x + 8}" y="${g.y - 8}" fill="${T.text}" font-size="11">COM</text>
+        <text x="${s - 6}" y="${c - 8}" text-anchor="end" fill="${T.faint}" font-size="10">COM x = mean(x cos θ)</text>
+        <text x="${c + 8}" y="${m - 6}" fill="${T.faint}" font-size="10">COM y = mean(x sin θ)</text>
+      </svg>`;
+    }
+
+    function render() {
+      const signal = SIGNALS.find((s) => s.id === signalId);
+      const x = makeSignal(signal.freqs, WINDOW, RATE);
+      const z = correlate(x, probeHz, RATE);
+      const inSignal = signal.freqs.some((f) => Math.abs(f - probeHz) < 0.01);
+      const nStar = Math.max(1, Math.min(DRAW_N - 1, Math.round(RATE / (8 * probeHz))));
+      const thetaStar = (2 * Math.PI * probeHz * nStar) / RATE;
+      const vStar = x[nStar];
+      const reStar = vStar * Math.cos(thetaStar), imStar = vStar * Math.sin(thetaStar);
+      const dX = downsample(x.slice(0, DRAW_N), N_PLOT);
+      const masses = Array.from({ length: N_MASSES }, (_, k) => {
+        const i = Math.min(WINDOW - 1, Math.round((k / (N_MASSES - 1)) * (WINDOW - 1)));
+        const angle = (2 * Math.PI * probeHz * i) / RATE;
+        return { re: x[i] * Math.cos(angle), im: x[i] * Math.sin(angle) };
+      });
+
+      document.getElementById("root").innerHTML = `
+        <h1>Winding is polar. The multiply is Cartesian.</h1>
+        <p class="lede">Each sample is one equal mass. Winding puts it at angle θₙ = 2π f n / fₛ, at distance x[n] from the origin. Center of mass is the average of those points. Same ${WINDOW} samples as <code>layer03_correlate.py</code>.</p>
+        <p class="small">Signal x</p>
+        <div class="row" id="sigs"></div>
+        <p class="small">Wind at frequency f</p>
+        <div class="row" id="probes"></div>
+        <h2>1. One sample on the winding</h2>
+        <p>Sample n=${nStar} has a height x[${nStar}] on the waveform. Winding ignores the time axis and places that height on a ray at angle θ. A point at distance r and angle θ has Cartesian coords (r cos θ, r sin θ). Here r is x[n], so the multiply is just reading x and y.</p>
+        <div class="grid grid-2">
+          <div>
+            <h3>time domain — one marked sample</h3>
+            ${waveSvg({ yAbs: 1.05, yLabel: "x", xLabel: `first ${DRAW_MS} ms  ·  n=${nStar} marked`, mark: { i: nStar, n: DRAW_N, color: T.accent }, series: [{ ys: dX, color: T.text, width: 1.5 }], w: 640, h: 128 })}
+          </div>
+          <div>
+            <h3>same sample, placed at angle θ</h3>
+            ${oneMass(vStar, thetaStar, nStar)}
+          </div>
+        </div>
+        ${tableHtml({
+          headers: ["", "value", "what it is"],
+          align: ["left", "right", "left"],
+          rows: [
+            ["x[n]", vStar.toFixed(3), "radius — how far out on the ray"],
+            ["θ", `${((thetaStar * 180) / Math.PI).toFixed(1)}°`, "angle — time wrapped at f"],
+            ["x cos θ", reStar.toFixed(3), "this mass's horizontal coordinate"],
+            ["x sin θ", imStar.toFixed(3), "this mass's vertical coordinate"],
+          ],
+        })}
+        <h2>2. Center of mass of every sample</h2>
+        <p>Do that for all N samples. Each is one mass. The center of mass is the average position — average the x-coords, average the y-coords. That is exactly Re/N and Im/N. The hypotenuse is how far the pile sits from the origin.</p>
+        ${statsHtml([
+          { value: z.reN.toFixed(3), label: "COM x  =  mean(x cos θ)" },
+          { value: z.imN.toFixed(3), label: "COM y  =  mean(x sin θ)" },
+          { value: z.mag.toFixed(3), label: "distance of COM from 0", tone: inSignal ? "success" : "" },
+        ])}
+        ${inSignal
+          ? callout("success", "Winding bunches off-center", "Probe matches a note, so peaks keep landing on the same side of the circle. The cloud’s average — COM — sits away from the origin. That offset is energy_at.")
+          : callout("", "Winding smears evenly", "Probe does not match, so masses wrap all the way around and cancel. COM stays at the origin. hypot is ~0.")}
+        ${massCloud(masses, { re: z.reN, im: z.imN }, { re: reStar, im: imStar })}
+        <p class="caption">Gray dots: wound samples (masses). Accent dot on the ring: sample n=${nStar} from above. Accent dot with stem: COM. Dashed lines are COM x and COM y. Source: ${WINDOW} samples, ${N_MASSES} dots shown.</p>
+        <h2>3. Euler packs both multiplies into one</h2>
+        <p>A complex number a + bi is the point (a, b) on this plane. i is the vertical unit — a quarter-turn, not a second kind of quantity. Euler’s formula says the point on the unit circle at angle θ is e<sup>iθ</sup> = cos θ + i sin θ. Multiply that by the real sample x[n] and you get the mass: x e<sup>iθ</sup> = (x cos θ) + i (x sin θ). The loop’s two accumulators are Re and Im of Σ x[n] e<sup>iθₙ</sup>.</p>
+        <div class="grid grid-2">
+          ${eulerSplit(vStar, thetaStar)}
+          <div>
+            ${tableHtml({
+              headers: ["complex", "point on the plane"],
+              rows: [
+                ["i", "(0, 1)  — up"],
+                ["e^{iθ}", `(${Math.cos(thetaStar).toFixed(2)}, ${Math.sin(thetaStar).toFixed(2)})`],
+                ["x e^{iθ}", `(${reStar.toFixed(2)}, ${imStar.toFixed(2)})  — one mass`],
+                ["(1/N) Σ x e^{iθ}", `(${z.reN.toFixed(3)}, ${z.imN.toFixed(3)})  — COM`],
+              ],
+            })}
+            <p class="caption">Gray: e^(iθ) on the unit circle. Accent: same angle, scaled by x[${nStar}]. hypot(Re, Im) is |z|, the length of a complex number.</p>
+          </div>
+        </div>
+      `;
+      document.getElementById("sigs").innerHTML = pillsHtml(SIGNALS, signalId, "s");
+      document.getElementById("probes").innerHTML = pillsHtml(PROBES, probeHz, "p");
+      document.querySelectorAll("#sigs .pill").forEach((b) => { b.onclick = () => { signalId = b.dataset.id; render(); }; });
+      document.querySelectorAll("#probes .pill").forEach((b) => { b.onclick = () => { probeHz = +b.dataset.id; render(); }; });
+    }
+    render();
+  </script>
+</body>
+</html>

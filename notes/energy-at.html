@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>energy_at — piano-transcribe notes</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <nav id="nav" class="site-nav"></nav>
+  <main id="root"></main>
+  <script src="common.js"></script>
+  <script>
+    nav("energy-at");
+    const RATE = 44100, WINDOW = 4096, DRAW_MS = 20;
+    const DRAW_N = Math.round((RATE * DRAW_MS) / 1000);
+    const N_PLOT = 220, N_RUN = 48;
+    const NOTES = { C4: 261.63, E4: 329.63, G4: 392 };
+    const SIGNALS = [
+      { id: "c4", label: "C4 only", freqs: [NOTES.C4] },
+      { id: "e4", label: "E4 only", freqs: [NOTES.E4] },
+      { id: "g4", label: "G4 only", freqs: [NOTES.G4] },
+      { id: "chord", label: "C major chord", freqs: [NOTES.C4, NOTES.E4, NOTES.G4] },
+    ];
+    const PROBES = [
+      { hz: 200, label: "200 Hz" }, { hz: 261.63, label: "C4 261.63" },
+      { hz: 300, label: "300 Hz" }, { hz: 329.63, label: "E4 329.63" },
+      { hz: 350, label: "350 Hz" }, { hz: 392, label: "G4 392" }, { hz: 440, label: "A4 440" },
+    ];
+    const PHASES = [0, 90, 180];
+    let signalId = "c4", probeHz = 261.63, phase = 0;
+
+    function phasor(reN, imN, scale) {
+      const s = 180, c = s / 2, r = 70;
+      const px = c + (reN / scale) * r, py = c - (imN / scale) * r;
+      const mag = Math.hypot(reN, imN);
+      return `<svg viewBox="0 0 ${s} ${s}" width="100%" height="${s}">
+        <circle cx="${c}" cy="${c}" r="${r}" fill="none" stroke="${T.line}"/>
+        <line x1="${c - r - 4}" y1="${c}" x2="${c + r + 4}" y2="${c}" stroke="${T.line}"/>
+        <line x1="${c}" y1="${c - r - 4}" x2="${c}" y2="${c + r + 4}" stroke="${T.line}"/>
+        <text x="${c + r + 6}" y="${c + 4}" fill="${T.faint}" font-size="10">re (cos)</text>
+        <text x="${c + 6}" y="${c - r - 8}" fill="${T.faint}" font-size="10">im (sin)</text>
+        <line x1="${c}" y1="${c}" x2="${px}" y2="${py}" stroke="${T.accent}" stroke-width="2"/>
+        <circle cx="${px}" cy="${py}" r="3.5" fill="${T.accent}"/>
+        <text x="${c}" y="${s - 6}" text-anchor="middle" fill="${T.muted}" font-size="11">|z| = ${mag.toFixed(3)}</text>
+      </svg>`;
+    }
+
+    function magBar(value, max, active) {
+      const pct = Math.max(0, Math.min(100, (value / max) * 100));
+      return `<div class="bar-track"><div class="bar-fill ${active ? "on" : ""}" style="width:${pct}%"></div></div>`;
+    }
+
+    function render() {
+      const signal = SIGNALS.find((s) => s.id === signalId);
+      const x = makeSignal(signal.freqs, WINDOW, RATE, phase);
+      const z = correlate(x, probeHz, RATE);
+      const draw = x.slice(0, DRAW_N);
+      const cos = draw.map((_, i) => Math.cos((2 * Math.PI * probeHz * i) / RATE));
+      const sin = draw.map((_, i) => Math.sin((2 * Math.PI * probeHz * i) / RATE));
+      const prodRe = draw.map((v, i) => v * cos[i]);
+      const prodIm = draw.map((v, i) => v * sin[i]);
+      const dX = downsample(draw, N_PLOT), dCos = downsample(cos, N_PLOT), dSin = downsample(sin, N_PLOT);
+      const dRe = downsample(prodRe, N_PLOT), dIm = downsample(prodIm, N_PLOT);
+
+      const runCats = [], runRe = [], runIm = [];
+      let accRe = 0, accIm = 0;
+      const stride = Math.max(1, Math.floor(WINDOW / N_RUN));
+      for (let i = 0; i < WINDOW; i++) {
+        const angle = (2 * Math.PI * probeHz * i) / RATE;
+        accRe += x[i] * Math.cos(angle);
+        accIm += x[i] * Math.sin(angle);
+        if (i % stride === stride - 1 || i === WINDOW - 1) {
+          runCats.push(String(Math.round((i / RATE) * 1000)));
+          runRe.push(Number((accRe / (i + 1)).toFixed(4)));
+          runIm.push(Number((accIm / (i + 1)).toFixed(4)));
+        }
+      }
+      const sweep = PROBES.map((p) => ({ ...p, mag: correlate(x, p.hz, RATE).mag }));
+      const sweepMax = Math.max(0.05, ...sweep.map((s) => s.mag));
+      const inSignal = signal.freqs.some((f) => Math.abs(f - probeHz) < 0.01);
+      const cosineOnly = Math.abs(z.reN);
+      const phaseKillsCos = inSignal && Math.abs(phase) === 90;
+      const rows = Array.from({ length: 6 }, (_, i) => {
+        const v = x[i], angle = (2 * Math.PI * probeHz * i) / RATE;
+        return [String(i), v.toFixed(3), angle.toFixed(2), (v * Math.cos(angle)).toFixed(3), (v * Math.sin(angle)).toFixed(3)];
+      });
+
+      let note;
+      if (phaseKillsCos) {
+        note = callout("warning", "Cosine alone would miss this note",
+          "The signal is a quarter-turn off the test cosine, so <code>re</code> collapses toward zero even though the frequency matches. <code>im</code> catches it. <code>hypot</code> keeps the length — starting phase does not matter.");
+      } else if (inSignal) {
+        note = callout("success", "Probe matches a note in the signal",
+          "The product <code>x · cos</code> (and/or <code>x · sin</code>) sits mostly on one side of zero, so the running average climbs instead of cancelling. That leftover is the energy at this frequency.");
+      } else {
+        note = callout("", "Probe is not in the signal",
+          "The product oscillates around zero. Positive lumps cancel negative lumps, so both running averages stay near zero.");
+      }
+
+      document.getElementById("root").innerHTML = `
+        <h1>energy_at — multiply, add, take the length</h1>
+        <p class="lede"><code>energy_at</code> asks how much of one frequency is in the waveform. It multiplies every sample by a test cosine (re) and a test sine (im), adds those products, then returns <code>hypot(re, im) / N</code>. Plots show the first ${DRAW_MS} ms; the numbers use all ${WINDOW} samples (~93 ms), same as <code>layer03_correlate.py</code>.</p>
+        <p class="small">Signal</p>
+        <div class="row" id="sigs"></div>
+        <p class="small">Probe frequency</p>
+        <div class="row" id="probes"></div>
+        <p class="small">Signal phase (why sine AND cosine)</p>
+        <div class="row" id="phases"></div>
+        ${statsHtml([
+          { value: z.reN.toFixed(3), label: "re / N  (sum of x·cos)" },
+          { value: z.imN.toFixed(3), label: "im / N  (sum of x·sin)" },
+          { value: z.mag.toFixed(3), label: "hypot(re, im) / N", tone: inSignal ? "success" : "" },
+          { value: cosineOnly.toFixed(3), label: "|re| / N  (cosine only)", tone: phaseKillsCos ? "danger" : "" },
+        ])}
+        ${note}
+        <h2>1. Multiply</h2>
+        <p>Each sample <code>v</code> is multiplied by <code>cos(2π f i / rate)</code> and <code>sin(2π f i / rate)</code>. Same frequency as <code>v</code> → the product has a DC offset. Different frequency → it beats around zero.</p>
+        <div class="grid grid-2">
+          <div>
+            <h3>x and test cosine</h3>
+            ${waveSvg({ yAbs: 1.05, xLabel: `first ${DRAW_MS} ms`, series: [{ ys: dX, color: T.text, width: 1.6 }, { ys: dCos, color: T.accent, width: 1.2 }] })}
+            <p class="caption">Dark: signal x. Accent: test cosine at ${probeHz} Hz.</p>
+          </div>
+          <div>
+            <h3>x and test sine</h3>
+            ${waveSvg({ yAbs: 1.05, xLabel: `first ${DRAW_MS} ms`, series: [{ ys: dX, color: T.text, width: 1.6 }, { ys: dSin, color: T.accent, width: 1.2 }] })}
+            <p class="caption">Same signal, test wave shifted a quarter turn.</p>
+          </div>
+        </div>
+        <h2>2. The product is what gets added</h2>
+        <p>Green area is positive contribution to the sum; red is negative. The <code>for</code> loop is literally adding the height of this curve at every sample.</p>
+        <div class="grid grid-2">
+          <div>
+            <h3>x · cos → re</h3>
+            ${waveSvg({ yAbs: 1.05, xLabel: "product (in-phase)", fillSigned: dRe, series: [{ ys: dRe, color: T.text, width: 1.4 }], h: 140 })}
+          </div>
+          <div>
+            <h3>x · sin → im</h3>
+            ${waveSvg({ yAbs: 1.05, xLabel: "product (quadrature)", fillSigned: dIm, series: [{ ys: dIm, color: T.text, width: 1.4 }], h: 140 })}
+          </div>
+        </div>
+        <h2>3. Running average over the full 93 ms window</h2>
+        <p>After each sample, divide the running sum by how many samples so far. A match converges to a nonzero value; a miss wanders back to zero.</p>
+        ${lineChart({
+          categories: runCats,
+          series: [{ name: "running re / n", data: runRe }, { name: "running im / n", data: runIm }],
+          height: 200, beginAtZero: false,
+          refLines: [{ value: 0, label: "0" }],
+        })}
+        <p class="caption">X axis: time in the window (ms). Final values are re/N and im/N above.</p>
+        <div class="grid" style="grid-template-columns:180px 1fr">
+          <div>
+            <h2>4. hypot so phase drops out</h2>
+            ${phasor(z.reN, z.imN, 0.55)}
+            <p class="caption">Flip phase to 90°. The arrow rotates; its length stays put if the frequency still matches.</p>
+          </div>
+          <div>
+            <h2>Sweep the same probes as the script</h2>
+            ${tableHtml({
+              headers: ["Hz", "energy", ""],
+              align: ["left", "right", "left"],
+              tones: sweep.map((s) =>
+                Math.abs(s.hz - probeHz) < 0.01 ? "info" : signal.freqs.some((f) => Math.abs(f - s.hz) < 0.01) ? "success" : undefined),
+              rows: sweep.map((s) => [s.label, s.mag.toFixed(4), magBar(s.mag, sweepMax, s.hz === probeHz)]),
+            })}
+            <p class="caption">Accent bar is the selected probe. Green row: that note is in the current signal.</p>
+          </div>
+        </div>
+        ${card("energy_at loop, first 6 samples", `
+          <p><code>re += v * cos(angle)</code> and <code>im += v * sin(angle)</code> with <code>angle = 2π · ${probeHz} · i / ${RATE}</code>.</p>
+          ${tableHtml({ headers: ["i", "v", "angle", "v·cos", "v·sin"], align: ["right","right","right","right","right"], rows })}
+          <p class="caption">Then <code>return hypot(re, im) / len(x)</code>.</p>
+        `, "layer03_correlate.py:14–21")}
+      `;
+      document.getElementById("sigs").innerHTML = pillsHtml(SIGNALS, signalId, "s");
+      document.getElementById("probes").innerHTML = pillsHtml(PROBES, probeHz, "p");
+      document.getElementById("phases").innerHTML = PHASES.map((p) =>
+        `<button class="pill ${phase === p ? "active" : ""}" data-p="${p}">${p}°</button>`).join("");
+      document.querySelectorAll("#sigs .pill").forEach((b) => { b.onclick = () => { signalId = b.dataset.id; render(); }; });
+      document.querySelectorAll("#probes .pill").forEach((b) => { b.onclick = () => { probeHz = +b.dataset.id; render(); }; });
+      document.querySelectorAll("#phases .pill").forEach((b) => { b.onclick = () => { phase = +b.dataset.p; render(); }; });
+    }
+    render();
+  </script>
+</body>
+</html>

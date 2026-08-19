@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Notes — piano-transcribe</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <nav id="nav" class="site-nav"></nav>
+  <main>
+    <h1>Visual notes</h1>
+    <p class="lede">Standalone HTML copies of the canvases from this project. Open any file in a browser; nothing to build.</p>
+    <ul class="index-list">
+      <li>
+        <a href="harmonic-stack.html">
+          <div class="name">Four sines stacked into one note</div>
+          <div class="why">pluck() line 22 — fundamental plus three overtones. Toggle partials on and off.</div>
+        </a>
+      </li>
+      <li>
+        <a href="pluck.html">
+          <div class="name">Harmonic buzz × exponential fade</div>
+          <div class="why">pluck() line 23 — the same stack, multiplied by e<sup>−λt</sup>.</div>
+        </a>
+      </li>
+      <li>
+        <a href="render.html">
+          <div class="name">Mix each slot, stamp the answer key</div>
+          <div class="why">render() — concatenated 3.5 s waveform and the (7, 88) label matrix.</div>
+        </a>
+      </li>
+      <li>
+        <a href="fft-values.html">
+          <div class="name">What BIN_HZ and spectrum() actually return</div>
+          <div class="why">One 128 ms C4 frame: Hann taper, complex rFFT bins, magnitude peaks.</div>
+        </a>
+      </li>
+      <li>
+        <a href="spectrum.html">
+          <div class="name">Each line of transcribe.py:44–62</div>
+          <div class="why">Click a statement. Live FFT of the demo slots.</div>
+        </a>
+      </li>
+      <li>
+        <a href="energy-at.html">
+          <div class="name">energy_at — multiply, add, take the length</div>
+          <div class="why">Layer 3 correlator: x·cos, x·sin, hypot. Same 4096-sample window as the script.</div>
+        </a>
+      </li>
+      <li>
+        <a href="correlation-formula.html">
+          <div class="name">Winding is polar. The multiply is Cartesian.</div>
+          <div class="why">Each sample is a mass at angle θ. Center of mass is Re/N, Im/N. Euler packs both.</div>
+        </a>
+      </li>
+      <li>
+        <a href="keybank.html">
+          <div class="name">88 probes, one matrix–vector product</div>
+          <div class="why">Layer 5 keybank — the two lines as LaTeX, plus the same correlator on equal temperament.</div>
+        </a>
+      </li>
+    </ul>
+  </main>
+  <script src="common.js"></script>
+  <script>nav("index");</script>
+</body>
+</html>

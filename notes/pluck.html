@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pluck — piano-transcribe notes</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <nav id="nav" class="site-nav"></nav>
+  <main id="root"></main>
+  <script src="common.js"></script>
+  <script>
+    nav("pluck");
+    const MIDI = 60;
+    const F = midiToHz(MIDI);
+    const DUR = 0.5;
+    const DECAY_CODE = 3;
+    const Y_ABS = 1 + 1 / 2 + 1 / 3 + 1 / 4;
+    const ZOOM_DUR = 3 / F;
+    const N_FULL = 2000;
+    const N_ZOOM = 280;
+    const N_ENV = 21;
+
+    function harmonic(t) {
+      let s = 0;
+      for (let k = 1; k <= 4; k++) s += Math.sin(2 * Math.PI * F * k * t) / k;
+      return s;
+    }
+    function samples(n, t0, t1, decay) {
+      return Array.from({ length: n }, (_, i) => {
+        const t = t0 + (i / (n - 1)) * (t1 - t0);
+        return harmonic(t) * Math.exp(-decay * t);
+      });
+    }
+    function envelope(n, t0, t1, decay) {
+      return Array.from({ length: n }, (_, i) => {
+        const t = t0 + (i / (n - 1)) * (t1 - t0);
+        return Math.exp(-decay * t);
+      });
+    }
+
+    let decay = DECAY_CODE;
+    let showBand = true;
+
+    function render() {
+      const atEnd = Math.exp(-decay * DUR);
+      const halfLife = Math.log(2) / decay;
+      const envCats = Array.from({ length: N_ENV }, (_, i) => String(Math.round((i / (N_ENV - 1)) * DUR * 1000)));
+      const envData = envelope(N_ENV, 0, DUR, decay).map((v) => Number(v.toFixed(3)));
+      const full = samples(N_FULL, 0, DUR, decay);
+      const fullEnv = envelope(N_FULL, 0, DUR, decay);
+      const start = samples(N_ZOOM, 0, ZOOM_DUR, decay);
+      const endT0 = DUR - ZOOM_DUR;
+      const end = samples(N_ZOOM, endT0, DUR, decay);
+
+      document.getElementById("root").innerHTML = `
+        <h1>pluck() — harmonic buzz × exponential fade</h1>
+        <p class="lede">Line 22 builds a steady C4. Line 23 multiplies every sample by <code>exp(-3 * t)</code> so the note is loud at the strike and dies away — a crude struck string, not an organ.</p>
+        ${card("pluck(midi, dur=0.5)", `<p><code>wave = sum(sin(2π f k t) / k for k in 1..4)</code></p>
+          <p><code>return wave * exp(−3 * t)</code></p>`, "transcribe.py:18–23")}
+        <p class="small">Decay rate λ</p>
+        <div class="row" id="lams"></div>
+        ${statsHtml([
+          { value: String(decay), label: "λ in e^{−λt}" },
+          { value: `${(halfLife * 1000).toFixed(0)} ms`, label: "Half-life ln(2)/λ" },
+          { value: atEnd.toFixed(2), label: `Amplitude at t=${DUR}s` },
+          { value: "C4 · 0.5 s", label: "Note this plot uses" },
+        ])}
+        <h2>The envelope exp(-λt)</h2>
+        ${lineChart({
+          categories: envCats,
+          series: [{ name: `e^{−${decay}t}`, data: envData }],
+          yMin: 0, yMax: 1, height: 180, fill: true,
+          refLines: [
+            { value: 0.5, label: "half" },
+            { value: atEnd, label: `t=${DUR}s` },
+          ],
+        })}
+        <p class="caption">X axis is time in milliseconds. At t=0 the multiplier is 1; at the end of the 0.5 s slot it is ${atEnd.toFixed(2)}. Source: transcribe.py <code>pluck()</code> line 23.</p>
+        <h2>What the function returns — 0.5 s of C4</h2>
+        <label class="check"><input type="checkbox" id="band" ${showBand ? "checked" : ""}> Shade the ±envelope the wave is trapped in</label>
+        ${waveSvg({ series: [{ ys: full, color: T.accent, width: 1.5 }], yAbs: Y_ABS, xLabel: "Time (0 → 500 ms)", w: 800, h: 240, fillEnv: showBand ? fullEnv : null })}
+        <p class="caption">Same four sines as line 22, scaled by the envelope. The oscillation does not change shape — only the amplitude falls.</p>
+        <h2>Same 3 cycles, start vs end (shared amplitude scale)</h2>
+        <div class="grid grid-2">
+          <div>
+            <h3>t = 0 (strike)</h3>
+            ${waveSvg({ series: [{ ys: start, color: T.accent }], yAbs: Y_ABS, xLabel: `0 → ${(ZOOM_DUR * 1000).toFixed(1)} ms`, w: 400, h: 180 })}
+          </div>
+          <div>
+            <h3>t = ${(endT0 * 1000).toFixed(0)} ms (end of slot)</h3>
+            ${waveSvg({ series: [{ ys: end, color: T.accent }], yAbs: Y_ABS, xLabel: `${(endT0 * 1000).toFixed(0)} → 500 ms`, w: 400, h: 180 })}
+          </div>
+        </div>
+        <p class="caption">Identical harmonic shape, quieter. That is all line 23 does.</p>
+        <h2>Envelope checkpoints at λ=${decay}</h2>
+        ${tableHtml({
+          headers: ["t", "e^{−λt}", "What you hear"],
+          align: ["right", "right", "left"],
+          rows: [
+            ["0 ms", "1.00", "Strike — full amplitude"],
+            [`${Math.round(halfLife * 1000)} ms`, "0.50", "Half as loud (half-life)"],
+            ["500 ms", atEnd.toFixed(2), "End of the slot — note still decaying, then the next event starts"],
+          ],
+        })}
+      `;
+      document.getElementById("lams").innerHTML = [1, 3, 8]
+        .map((lam) => `<button class="pill ${decay === lam ? "active" : ""}" data-l="${lam}">${lam === DECAY_CODE ? `λ=${lam} (this code)` : `λ=${lam}`}</button>`)
+        .join("");
+      document.querySelectorAll("#lams .pill").forEach((b) => {
+        b.onclick = () => { decay = +b.dataset.l; render(); };
+      });
+      document.getElementById("band").onchange = (e) => { showBand = e.target.checked; render(); };
+    }
+    render();
+  </script>
+</body>
+</html>

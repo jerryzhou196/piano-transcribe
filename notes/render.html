@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Render — piano-transcribe notes</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <nav id="nav" class="site-nav"></nav>
+  <main id="root"></main>
+  <script src="common.js"></script>
+  <script>
+    nav("render");
+    const LOW = 21, N_KEYS = 88, DUR = 0.5, N_SLOT = 360, PITCH_LO = 60, PITCH_HI = 72;
+    const EVENTS = [
+      { midi: [60], name: "C4" },
+      { midi: [62], name: "D4" },
+      { midi: [64], name: "E4" },
+      { midi: [65], name: "F4" },
+      { midi: [67], name: "G4" },
+      { midi: [60, 64, 67], name: "C major" },
+      { midi: [60, 72], name: "C4+C5" },
+    ];
+    const NOTE_NAME = { 60: "C4", 62: "D4", 64: "E4", 65: "F4", 67: "G4", 72: "C5" };
+    const SLOTS = EVENTS.map((e) => mixChord(e.midi, N_SLOT, DUR));
+    const AUDIO = SLOTS.flat();
+    const Y_ABS = 1 + 1 / 2 + 1 / 3 + 1 / 4;
+    let selected = 5;
+
+    function concatWave() {
+      const w = 840, h = 200, pl = 40, pr = 12, pt = 10, pb = 28;
+      const iw = w - pl - pr, n = EVENTS.length, zeroY = pt + 0.5 * (h - pt - pb);
+      const lines = Array.from({ length: n + 1 }, (_, i) =>
+        `<line x1="${pl + (i / n) * iw}" y1="${pt}" x2="${pl + (i / n) * iw}" y2="${h - pb}" stroke="${T.line}"/>`,
+      ).join("");
+      const labels = EVENTS.map((e, i) =>
+        `<text x="${pl + ((i + 0.5) / n) * iw}" y="${h - 8}" text-anchor="middle" fill="${i === selected ? T.text : T.faint}" font-size="10">${e.name}</text>`,
+      ).join("");
+      return `<svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}">
+        <rect x="${pl + (selected / n) * iw}" y="${pt}" width="${iw / n}" height="${h - pt - pb}" fill="${T.fill}"/>
+        ${lines}
+        <line x1="${pl}" y1="${zeroY}" x2="${w - pr}" y2="${zeroY}" stroke="${T.line}" stroke-dasharray="4 4"/>
+        <path d="${toPath(AUDIO, w, h, -Y_ABS, Y_ABS, pl, pr, pt, pb)}" fill="none" stroke="${T.accent}" stroke-width="1.25"/>
+        ${labels}
+      </svg>`;
+    }
+
+    function pianoRoll() {
+      const pitches = Array.from({ length: PITCH_HI - PITCH_LO + 1 }, (_, i) => PITCH_HI - i);
+      const w = 840, h = 220, pl = 40, pr = 12, pt = 8, pb = 24;
+      const iw = w - pl - pr, ih = h - pt - pb, cw = iw / EVENTS.length, rh = ih / pitches.length;
+      const cells = pitches.map((p, r) => EVENTS.map((e, c) => {
+        const on = e.midi.includes(p);
+        const fill = on && c === selected ? T.accent : on ? T.text : T.fill2;
+        return `<rect x="${pl + c * cw + 1}" y="${pt + r * rh + 1}" width="${cw - 2}" height="${rh - 2}" fill="${fill}"/>`;
+      }).join("")).join("");
+      const ylabs = pitches.map((p, r) => NOTE_NAME[p]
+        ? `<text x="${pl - 6}" y="${pt + r * rh + rh * 0.7}" text-anchor="end" fill="${T.faint}" font-size="10">${NOTE_NAME[p]}</text>` : "").join("");
+      const xlabs = EVENTS.map((e, c) =>
+        `<text x="${pl + (c + 0.5) * cw}" y="${h - 6}" text-anchor="middle" fill="${c === selected ? T.text : T.faint}" font-size="10">${e.name}</text>`).join("");
+      return `<svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}">${cells}${ylabs}${xlabs}</svg>`;
+    }
+
+    function keyStrip(chord) {
+      const w = 840, h = 56, pl = 8, pr = 8, pt = 4, pb = 18;
+      const iw = w - pl - pr, kw = iw / N_KEYS, on = new Set(chord);
+      const keys = Array.from({ length: N_KEYS }, (_, k) => {
+        const midi = LOW + k;
+        return `<rect x="${pl + k * kw}" y="${pt}" width="${Math.max(kw - 0.5, 0.5)}" height="${h - pt - pb}" fill="${on.has(midi) ? T.accent : T.fill2}"/>`;
+      }).join("");
+      const marks = [{ midi: 21, label: "A0" }, { midi: 60, label: "C4" }, { midi: 72, label: "C5" }, { midi: 108, label: "C8" }]
+        .map((m) => `<text x="${pl + (m.midi - LOW + 0.5) * kw}" y="${h - 4}" text-anchor="middle" fill="${T.faint}" font-size="10">${m.label}</text>`).join("");
+      return `<svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}">${keys}${marks}</svg>`;
+    }
+
+    function render() {
+      const event = EVENTS[selected];
+      const nNotes = event.midi.length;
+      const keysOn = EVENTS.reduce((s, e) => s + e.midi.length, 0);
+      document.getElementById("root").innerHTML = `
+        <h1>render() — mix each slot, then stamp the answer key</h1>
+        <p class="lede">One loop over the 7 demo events. Each iteration appends 0.5 s of audio and writes a 1 into <code>labels</code> for every key that is down. Concatenate the chunks and you get the 3.5 s waveform plus a (7, 88) matrix.</p>
+        ${card("render(events)", `<p><code>mix = sum(pluck(m) for m in chord)</code> then <code>mix / len(chord)</code></p>
+          <p><code>labels[i, midi - 21] = 1</code> for each note in the slot</p>`, "transcribe.py:33–39")}
+        ${statsHtml([
+          { value: "7", label: "Slots (rows of labels)" },
+          { value: "3.5 s", label: "Concatenated audio" },
+          { value: "(7, 88)", label: "labels shape" },
+          { value: String(keysOn), label: "Keys marked 1 in total" },
+        ])}
+        <div class="row" id="slots"></div>
+        <h2>np.concatenate(audio) — seven 0.5 s chunks laid end to end</h2>
+        ${concatWave()}
+        <p class="caption">Highlight is the selected slot. Vertical lines are slot boundaries. Source: transcribe.py <code>render()</code> · demo events.</p>
+        <h2>labels — piano roll of keys down in each slot (MIDI 60–72)</h2>
+        ${pianoRoll()}
+        <p class="caption">Time runs left to right, pitch up the staff. The real matrix is 88 keys wide (A0–C8); rows outside this window are all zeros. Accent cells are the selected slot.</p>
+        <h2>labels[${selected}] — 88 keys, 1 where midi − 21 is on</h2>
+        ${keyStrip(event.midi)}
+        <p class="caption">Index 0 is A0 (MIDI 21). C4 is column 39; C5 is column 51.</p>
+        <div class="grid grid-2">
+          <div>
+            <h2>Slot ${selected}: ${event.name}</h2>
+            ${tableHtml({
+              headers: ["MIDI", "Note", "Hz", "labels column"],
+              align: ["right", "left", "right", "right"],
+              rows: event.midi.map((m) => [String(m), NOTE_NAME[m] ?? String(m), midiToHz(m).toFixed(1), String(m - LOW)]),
+            })}
+            ${nNotes > 1
+              ? callout("info", `Divided by ${nNotes}`, `${nNotes} plucks are summed, then divided by ${nNotes} so a chord is not ${nNotes}× louder than a single note.`)
+              : callout("", "Single note", "Divisor is max(len(chord), 1) = 1. The chunk is just pluck of this MIDI number.")}
+          </div>
+          <div>
+            <h2>Every slot</h2>
+            ${tableHtml({
+              headers: ["i", "events[i]", "keys on", "label columns"],
+              align: ["right", "left", "right", "left"],
+              tones: EVENTS.map((_, i) => (i === selected ? "info" : undefined)),
+              rows: EVENTS.map((e, i) => [String(i), e.name, String(e.midi.length), e.midi.map((m) => m - LOW).join(", ")]),
+            })}
+          </div>
+        </div>
+      `;
+      document.getElementById("slots").innerHTML = EVENTS.map((e, i) =>
+        `<button class="pill ${i === selected ? "active" : ""}" data-i="${i}">${i}  ${e.name}</button>`).join("");
+      document.querySelectorAll("#slots .pill").forEach((b) => {
+        b.onclick = () => { selected = +b.dataset.i; render(); };
+      });
+    }
+    render();
+  </script>
+</body>
+</html>
